@@ -19,3 +19,10 @@ Author
 ------
 
 Ade Rixon, http://www.big-bubbles.org.uk/
+
+
+Acknowledgements
+----------------
+
+Outline install and Django setup code taken from
+https://github.com/nsg/ansible-graphite
