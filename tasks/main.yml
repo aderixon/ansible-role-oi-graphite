@@ -1,0 +1,210 @@
+---
+# file: roles/graphite/tasks/main.yml
+
+- name: create Graphite filesystem
+  zfs:
+    name: "{{ graphite_pool }}{{ graphite_dir }}"
+    state: present
+    extra_zfs_properties:
+      compression: lz4
+  tags:
+  - graphite-install
+
+- name: create Graphite user
+  user:
+    name: "{{ graphite_user }}"
+    comment: "Carbon cache user"
+    uid: "{{ graphite_uid | default(omit) }}"
+    home: "{{ graphite_dir }}"
+    groups: ['webservd']
+  tags:
+  - graphite-config
+
+- name: install required native packages
+  package:
+    name: "{{ item }}"
+    state: installed
+  with_items:
+  - fontconfig
+  - libffi
+  - cairo
+  - cffi
+  - pytz
+  - scandir
+  - pip
+  tags:
+  - graphite-install
+
+- name: install memcached
+  package:
+    name: "{{ item }}"
+    state: installed
+  with_items:
+  - memcached
+  - python-memcached
+  when: graphite_memcached
+  tags:
+  - graphite-install
+
+- name: install PIP packages
+  pip:
+    name: "{{ item.name }}"
+    version: "{{ item.version | default(omit) }}"
+    state: present
+  with_items:
+  - { name: Django, version: 1.11.16 }
+  - { name: cairocffi }
+  - { name: django-tagging, version: 0.4.6 }
+  - { name: whitenoise }
+  tags:
+  - graphite-install
+  - graphite-install-pip
+
+# needs gcc-6
+# NB. overrides native pkg
+- name: upgrade Twisted
+  pip:
+    name: Twisted
+    state: present
+    version: 13.2.0
+  tags:
+  - graphite-install
+  - graphite-install-pip
+
+- name: install Graphite packages
+  pip:
+    name: "{{ item }}"
+    state: present
+    extra_args: "--no-binary=:all: --install-option=\"--prefix={{ graphite_dir }}\" --install-option=\"--install-lib={{ graphite_dir }}/lib\""
+  with_items:
+  - "{{ graphite_repo }}/whisper/tarball/master"
+  - "{{ graphite_repo }}/carbon/tarball/master"
+  - "{{ graphite_repo }}/graphite-web/tarball/master"
+  environment:
+    PYTHONPATH: "{{ graphite_dir }}/lib:{{ graphite_dir }}/webapp"
+  notify: restart carbon-cache
+  register: graphite_install
+  tags:
+  - graphite-install
+  - graphite-install-repo
+
+- name: Set perms for graphite storage
+  file:
+    path: "{{ graphite_dir }}/storage"
+    owner: "{{ graphite_user }}"
+    group: webservd
+    recurse: yes
+    state: directory
+  when: graphite_install|changed
+  tags:
+  - graphite-install
+  - graphite-install-repo
+
+# fix for twisted dropin.cache creation
+- name: Set perms for twisted
+  file:
+    path: "{{ graphite_dir }}/lib/twisted"
+    owner: "{{ graphite_user }}"
+    recurse: yes
+    state: directory
+  when: graphite_install|changed
+  tags:
+  - graphite-install
+  - graphite-install-repo
+
+- name: import carbon-cache manifest
+  template:
+    src: carbon-cache.xml.j2
+    dest: /lib/svc/manifest/network/carbon-cache.xml
+    owner: root
+    group: root
+    mode: '0444'
+  notify: restart manifest-import
+  tags:
+  - graphite-config
+  - graphite-config-svc
+  - graphite-svc
+
+- meta: flush_handlers
+  tags:
+  - graphite-config
+  - graphite-config-svc
+  - graphite-svc
+
+- name: deploy configuration files
+  template:
+    src: "{{ item }}"
+    dest: "{{ graphite_dir }}/conf/{{ item | basename | regex_replace('\\.j2', '') }}"
+    owner: root
+    group: root
+    mode: '0444'
+  with_fileglob: ../templates/graphite/*.j2
+  tags:
+  - graphite-config
+  - graphite-config-carbon
+
+- name: deploy graphite settings
+  template:
+    src: local_settings.py.j2
+    dest: "{{ graphite_dir }}/lib/graphite/local_settings.py"
+    owner: root
+    group: root
+    mode: '0444'
+  tags:
+  - graphite-config
+
+- name: deploy web vhost config
+  template:
+    src: graphite.conf.j2
+    dest: /etc/apache2/2.4/conf.d/ZZ_vhost_graphite.conf
+    owner: root
+    group: root
+    mode: '0444'
+  notify: restart apache
+  tags:
+  - graphite-config
+  - graphite-config-web
+
+- name: inspect graphite db
+  command: django-admin inspectdb
+  environment:
+    DJANGO_SETTINGS_MODULE: graphite.settings
+    PYTHONPATH: "{{ graphite_dir }}/lib/"
+  check_mode: no
+  become: yes
+  become_user: "{{ graphite_user }}"
+  register: result
+  changed_when: False
+  tags:
+  - graphite-config
+  - graphite-config-db
+
+- name: sync/create database
+  command: django-admin migrate --run-syncdb --noinput
+  environment:
+    DJANGO_SETTINGS_MODULE: graphite.settings
+    PYTHONPATH: "{{ graphite_dir }}/lib/"
+  become: yes
+  become_user: "{{ graphite_user }}"
+  when: result.stdout.find("AccountMygraph") == -1
+  tags:
+  - graphite-config
+  - graphite-config-db
+
+- name: start memcached
+  service:
+    name: memcached
+    enabled: yes
+    state: started
+  when: graphite_memcached
+  tags:
+  - graphite-svc
+  - graphite-svc-memcached
+
+- name: start carbon-cache
+  service:
+    name: carbon-cache
+    enabled: yes
+    state: started
+  tags:
+  - carbon-svc

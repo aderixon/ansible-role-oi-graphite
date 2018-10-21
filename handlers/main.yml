@@ -1,0 +1,17 @@
+---
+# file: roles/graphite/handlers/main.yml
+
+- name: restart apache
+  service:
+    name: http:apache24
+    state: restarted
+
+- name: restart manifest-import
+  service:
+    name: manifest-import
+    state: restarted
+
+- name: restart carbon-cache
+  service:
+    name: carbon-cache
+    state: restarted

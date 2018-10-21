@@ -1,0 +1,10 @@
+---
+# file: roles/graphite/defaults/main.yml
+
+graphite_pool: rpool
+graphite_user: carbon
+graphite_dir: /opt/graphite
+graphite_secret: 'changethistosomethingunique'
+graphite_memcached: false
+graphite_site: 'graphite'
+graphite_repo: 'https://github.com/graphite-project'
