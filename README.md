@@ -10,8 +10,9 @@ Limitations
 
  * Not all permission issues resolved.
  * Only configures single, local instance.
- * whisper.py requires monkey patching for the fallocate bug on ZFS: see
+ * FIXED, disabled in config: whisper.py auto-detection of fallocate fails on ZFS: see
    https://github.com/graphite-project/whisper/issues/79
+ * Variables need documenting.  
  * Still a work in progress.
 
 
